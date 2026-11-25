@@ -3,6 +3,7 @@
 // store pages with a copy-paste report, and a password-protected private view.
 (function () {
   const app = document.getElementById("app");
+  const S = window.RiftSearch;  // search.js: the search and list rules
   let DATA = null;
   let PRIVATE = null;
   let STATE = "";  // state filter from the URL (#/events?state=US-MA); nothing else is remembered
@@ -38,7 +39,6 @@
   }
 
   // ---- state filter: "" = all, "US" = a whole country, "US-MA" = one state ----
-  const countryOf = (s) => (s && s.country) || "other";
   const filterValues = () => {
     const v = new Set([""]);
     (DATA.regions || []).forEach((g) => {
@@ -48,12 +48,6 @@
     });
     return v;
   };
-  function inState(s, f) {
-    if (!f) return true;
-    const i = f.indexOf("-");
-    const c = i < 0 ? f : f.slice(0, i);
-    return countryOf(s) === c && (i < 0 || (s && s.state) === f.slice(i + 1));
-  }
   function stateSelect() {
     const opt = (v, label) => `<option value="${esc(v)}"${v === STATE ? " selected" : ""}>${esc(label)}</option>`;
     return `<select id="st" aria-label="Filter by state or province">${opt("", "All states and provinces")}` +
@@ -83,20 +77,21 @@
   function storesView() {
     const stores = storeById();
     app.innerHTML = `<h1>Stores with suspicious registrations</h1>
-      <p class="muted">Stores with at least one High event, most first. Search covers every listed store.</p>
+      <p class="muted" id="what"></p>
       <div class="filters"><input type="search" id="q" placeholder="Search stores, cities or states" aria-label="Search stores">
       ${stateSelect()}</div>
       <p class="muted small" id="n"></p>
       <ul class="list" id="out"></ul>`;
     const out = document.getElementById("out");
     const draw = () => {
-      const q = document.getElementById("q").value;
-      const ids = (q.trim() ? DATA.stores.filter((s) => match(q, s.name, s.city, s.state, s.address)).map((s) => s.id)
-        : DATA.leaderboard).filter((id) => inState(stores[id], STATE));
+      const { ids, ranked } = S.storeList(DATA, document.getElementById("q").value, STATE);
+      document.getElementById("what").textContent = ranked
+        ? "Stores with at least one High event, most first. Search or pick a state to see every listed store."
+        : "Every listed store that matches, most High events first. Clear the search and pick All to see the ranking.";
       document.getElementById("n").textContent = `${ids.length} store${ids.length === 1 ? "" : "s"}`;
       out.innerHTML = ids.map((id, i) => {
         const s = stores[id];
-        return `<li><span class="rank">${q.trim() ? "" : i + 1}</span><div class="grow">
+        return `<li><span class="rank">${ranked ? i + 1 : ""}</span><div class="grow">
           <div class="title"><a href="${href(id)}">${esc(s.name)}</a></div><div class="muted">${place(s)}</div></div>
           <div class="count">${s.high} High<br>${s.elevated} Elevated</div></li>`;
       }).join("") || `<li class="muted">No stores match.</li>`;
@@ -113,11 +108,7 @@
       <ul class="list" id="out"></ul>`;
     const out = document.getElementById("out");
     const draw = () => {
-      const q = document.getElementById("q").value;
-      const rows = DATA.events.filter((e) => {
-        const s = stores[e.store_id] || {};
-        return inState(s, STATE) && match(q, e.name, s.name, s.city, s.state, e.level);
-      });
+      const rows = S.eventList(DATA, document.getElementById("q").value, STATE);
       document.getElementById("n").textContent = `${rows.length} event${rows.length === 1 ? "" : "s"}` +
         (rows.length > 300 ? " (showing the first 300)" : "");
       out.innerHTML = rows.slice(0, 300).map((e) => eventItem(e, stores)).join("") ||
