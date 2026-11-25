@@ -1,10 +1,11 @@
 "use strict";
-// RiftWatch static site: leaderboard, store and event search, store pages with
-// a copy-paste report, and a password-protected private view.
+// RiftWatch static site: leaderboard, store and event search with a state filter,
+// store pages with a copy-paste report, and a password-protected private view.
 (function () {
   const app = document.getElementById("app");
   let DATA = null;
   let PRIVATE = null;
+  let STATE = "";  // state filter from the URL (#/events?state=US-MA); nothing else is remembered
 
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -16,7 +17,7 @@
   const badge = (lvl) => `<span class="badge ${esc(lvl)}">${esc(lvl)}</span>`;
   const storeById = () => Object.fromEntries(DATA.stores.map((s) => [s.id, s]));
   const eventById = () => Object.fromEntries(DATA.events.map((e) => [e.id, e]));
-  const href = (id) => "#/store/" + encodeURIComponent(id);
+  const href = (id) => withState("#/store/" + encodeURIComponent(id));
 
   function counts(e) {
     let t = `${esc(e.registered)} registered`;
@@ -36,17 +37,63 @@
     return !q || fields.some((f) => String(f || "").toLowerCase().includes(q));
   }
 
+  // ---- state filter: "" = all, "US" = a whole country, "US-MA" = one state ----
+  const countryOf = (s) => (s && s.country) || "other";
+  const filterValues = () => {
+    const v = new Set([""]);
+    (DATA.regions || []).forEach((g) => {
+      const c = g.country || "other";
+      v.add(c);
+      g.states.forEach((st) => v.add(c + "-" + st.code));
+    });
+    return v;
+  };
+  function inState(s, f) {
+    if (!f) return true;
+    const i = f.indexOf("-");
+    const c = i < 0 ? f : f.slice(0, i);
+    return countryOf(s) === c && (i < 0 || (s && s.state) === f.slice(i + 1));
+  }
+  function stateSelect() {
+    const opt = (v, label) => `<option value="${esc(v)}"${v === STATE ? " selected" : ""}>${esc(label)}</option>`;
+    return `<select id="st" aria-label="Filter by state or province">${opt("", "All states and provinces")}` +
+      (DATA.regions || []).map((g) => {
+        const c = g.country || "other";
+        return `<optgroup label="${esc(g.name)}">${opt(c, "All of " + g.name)}` +
+          g.states.map((st) => opt(c + "-" + st.code, st.name)).join("") + `</optgroup>`;
+      }).join("") + `</select>`;
+  }
+  const withState = (path) => path + (STATE ? "?state=" + encodeURIComponent(STATE) : "");
+  function navLinks() {
+    document.querySelectorAll("[data-nav=stores]").forEach((a) => { a.href = withState("#/"); });
+    document.querySelectorAll("[data-nav=events]").forEach((a) => { a.href = withState("#/events"); });
+  }
+  // Wires the search box and the state select to `draw`; the select also updates the URL.
+  function bindFilters(path, draw) {
+    document.getElementById("q").addEventListener("input", draw);
+    document.getElementById("st").addEventListener("change", (ev) => {
+      STATE = ev.target.value;
+      history.replaceState(null, "", withState(path));
+      navLinks();
+      draw();
+    });
+    draw();
+  }
+
   function storesView() {
     const stores = storeById();
     app.innerHTML = `<h1>Stores with suspicious registrations</h1>
       <p class="muted">Stores with at least one High event, most first. Search covers every listed store.</p>
-      <input type="search" id="q" placeholder="Search stores, cities or states" aria-label="Search stores">
+      <div class="filters"><input type="search" id="q" placeholder="Search stores, cities or states" aria-label="Search stores">
+      ${stateSelect()}</div>
+      <p class="muted small" id="n"></p>
       <ul class="list" id="out"></ul>`;
     const out = document.getElementById("out");
     const draw = () => {
       const q = document.getElementById("q").value;
-      const ids = q.trim() ? DATA.stores.filter((s) => match(q, s.name, s.city, s.state, s.address)).map((s) => s.id)
-        : DATA.leaderboard;
+      const ids = (q.trim() ? DATA.stores.filter((s) => match(q, s.name, s.city, s.state, s.address)).map((s) => s.id)
+        : DATA.leaderboard).filter((id) => inState(stores[id], STATE));
+      document.getElementById("n").textContent = `${ids.length} store${ids.length === 1 ? "" : "s"}`;
       out.innerHTML = ids.map((id, i) => {
         const s = stores[id];
         return `<li><span class="rank">${q.trim() ? "" : i + 1}</span><div class="grow">
@@ -54,27 +101,29 @@
           <div class="count">${s.high} High<br>${s.elevated} Elevated</div></li>`;
       }).join("") || `<li class="muted">No stores match.</li>`;
     };
-    document.getElementById("q").addEventListener("input", draw);
-    draw();
+    bindFilters("#/", draw);
   }
 
   function eventsView() {
     const stores = storeById();
     app.innerHTML = `<h1>Events with suspicious registrations</h1>
-      <input type="search" id="q" placeholder="Search events, stores, cities or states" aria-label="Search events">
+      <div class="filters"><input type="search" id="q" placeholder="Search events, stores, cities or states" aria-label="Search events">
+      ${stateSelect()}</div>
+      <p class="muted small" id="n"></p>
       <ul class="list" id="out"></ul>`;
     const out = document.getElementById("out");
     const draw = () => {
       const q = document.getElementById("q").value;
       const rows = DATA.events.filter((e) => {
         const s = stores[e.store_id] || {};
-        return match(q, e.name, s.name, s.city, s.state, e.level);
+        return inState(s, STATE) && match(q, e.name, s.name, s.city, s.state, e.level);
       });
+      document.getElementById("n").textContent = `${rows.length} event${rows.length === 1 ? "" : "s"}` +
+        (rows.length > 300 ? " (showing the first 300)" : "");
       out.innerHTML = rows.slice(0, 300).map((e) => eventItem(e, stores)).join("") ||
         `<li class="muted">No events match.</li>`;
     };
-    document.getElementById("q").addEventListener("input", draw);
-    draw();
+    bindFilters("#/events", draw);
   }
 
   function storeView(id) {
@@ -82,7 +131,7 @@
     if (!s) { app.innerHTML = `<p>Store not found. <a href="#/">Back to stores</a></p>`; return; }
     const evs = eventById();
     const stores = storeById();
-    app.innerHTML = `<p><a href="#/">← Stores</a></p><h1>${esc(s.name)}</h1>
+    app.innerHTML = `<p><a href="${withState("#/")}">← Stores</a></p><h1>${esc(s.name)}</h1>
       <p class="muted">${esc(s.address)}</p>
       <p>${s.high} High · ${s.elevated} Elevated</p>
       <ul class="list">${s.events.map((e) => eventItem(evs[e], stores)).join("")}</ul>
@@ -103,7 +152,7 @@
       <p>A store's listing means some of its events had registrations that look automated.
       It is not a finding that anyone did anything wrong.</p>
       ${DATA.contact ? `<p>Questions or a listing you think is wrong: ${esc(DATA.contact)}</p>` : ''}
-      <p class="muted">Data as of ${esc(DATA.data_as_of)}.</p>`;
+      <p class="muted">${esc(asOf())}</p>`;
   }
 
   // ---- private view: decrypted in the browser, never sent anywhere ----
@@ -158,8 +207,20 @@
     draw();
   }
 
+  function asOf() {
+    const sc = DATA.scan || {};
+    const n = (x) => Number(x || 0).toLocaleString();
+    if (!sc.partial) return `Data as of ${DATA.data_as_of}.`;
+    return `Data as of ${DATA.data_as_of}. Partial scan: ` + (sc.points_total && sc.points_done < sc.points_total
+      ? `${n(sc.points_done)} of ${n(sc.points_total)} search areas covered.`
+      : `${n(sc.checked)} of ${n(sc.total)} event pages checked.`);
+  }
+
   function route() {
-    const h = location.hash.replace(/^#\/?/, "");
+    const [h, qs] = location.hash.replace(/^#\/?/, "").split("?");
+    const want = new URLSearchParams(qs || "").get("state") || "";
+    STATE = filterValues().has(want) ? want : "";
+    navLinks();
     const [page, arg] = h.split("/");
     document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("on",
       a.dataset.nav === (page || "stores") || (page === "store" && a.dataset.nav === "stores")));
@@ -173,7 +234,7 @@
 
   fetch("data/public.json", { cache: "no-store" }).then((r) => r.json()).then((d) => {
     DATA = d;
-    document.getElementById("asof").textContent = `Data as of ${d.data_as_of}.`;
+    document.getElementById("asof").textContent = asOf();
     document.getElementById("private-link").hidden = !d.has_private;
     window.addEventListener("hashchange", route);
     route();

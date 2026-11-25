@@ -25,8 +25,13 @@ footer { max-width: 860px; margin: 0 auto; padding: 8px 16px 32px; color: var(--
 h1 { font-size: 1.4rem; margin: .2em 0 .4em; }
 h2 { font-size: 1.1rem; margin: 1.2em 0 .4em; }
 .muted { color: var(--muted); }
-input[type=search], input[type=password] { width: 100%; padding: 10px 12px; font-size: 1rem;
+input[type=search], input[type=password], select { width: 100%; padding: 10px 12px; font-size: 1rem;
   border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--text); }
+select { font: inherit; min-height: 44px; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.filters input[type=search] { flex: 2 1 260px; width: auto; min-width: 0; }
+.filters select { flex: 1 1 200px; width: auto; min-width: 0; }
+.small { font-size: .9rem; margin: 8px 0 0; }
 .list { list-style: none; padding: 0; margin: 12px 0; }
 .list li { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
   padding: 12px 14px; margin-bottom: 8px; display: flex; gap: 12px; align-items: flex-start; }
