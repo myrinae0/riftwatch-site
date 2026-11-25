@@ -33,25 +33,22 @@
       <div class="count">${counts(e)}</div></li>`;
   }
 
-  function match(q, ...fields) {
-    q = q.trim().toLowerCase();
-    return !q || fields.some((f) => String(f || "").toLowerCase().includes(q));
-  }
-
   // ---- state filter: "" = all, "US" = a whole country, "US-MA" = one state ----
-  const filterValues = () => {
+  // `regions` is the public data's, or the private data's on the private page.
+  const filterValues = (regions) => {
     const v = new Set([""]);
-    (DATA.regions || []).forEach((g) => {
+    (regions || []).forEach((g) => {
       const c = g.country || "other";
       v.add(c);
       g.states.forEach((st) => v.add(c + "-" + st.code));
     });
     return v;
   };
-  function stateSelect() {
+  const hashState = () => new URLSearchParams(location.hash.split("?")[1] || "").get("state") || "";
+  function stateSelect(regions) {
     const opt = (v, label) => `<option value="${esc(v)}"${v === STATE ? " selected" : ""}>${esc(label)}</option>`;
     return `<select id="st" aria-label="Filter by state or province">${opt("", "All states and provinces")}` +
-      (DATA.regions || []).map((g) => {
+      (regions || []).map((g) => {
         const c = g.country || "other";
         return `<optgroup label="${esc(g.name)}">${opt(c, "All of " + g.name)}` +
           g.states.map((st) => opt(c + "-" + st.code, st.name)).join("") + `</optgroup>`;
@@ -79,7 +76,7 @@
     app.innerHTML = `<h1>Stores with suspicious registrations</h1>
       <p class="muted" id="what"></p>
       <div class="filters"><input type="search" id="q" placeholder="Search stores, cities or states" aria-label="Search stores">
-      ${stateSelect()}</div>
+      ${stateSelect(DATA.regions)}</div>
       <p class="muted small" id="n"></p>
       <ul class="list" id="out"></ul>`;
     const out = document.getElementById("out");
@@ -103,7 +100,7 @@
     const stores = storeById();
     app.innerHTML = `<h1>Events with suspicious registrations</h1>
       <div class="filters"><input type="search" id="q" placeholder="Search events, stores, cities or states" aria-label="Search events">
-      ${stateSelect()}</div>
+      ${stateSelect(DATA.regions)}</div>
       <p class="muted small" id="n"></p>
       <ul class="list" id="out"></ul>`;
     const out = document.getElementById("out");
@@ -178,24 +175,31 @@
     const P = PRIVATE;
     const sig = (s) => `<li><b>${esc(s.code)}</b> w=${esc(s.weight)} c=${esc(s.confidence)}: ${esc(s.detail)}
       ${s.players && s.players.length ? `<details><summary>${s.players.length} accounts</summary><pre>${esc(s.players.join("\n"))}</pre></details>` : ""}</li>`;
+    // The private list covers more states than the public one, so it has its own choices.
+    const regions = P.regions || DATA.regions;
+    STATE = filterValues(regions).has(hashState()) ? hashState() : "";
+    navLinks();
     app.innerHTML = `<h1>Private</h1><p class="muted">Data as of ${esc(P.data_as_of)}. All levels, with reasons.</p>
-      <input type="search" id="q" placeholder="Filter" aria-label="Filter">
-      <h2>Flagged events</h2><div id="ev"></div>
+      <div class="filters"><input type="search" id="q" placeholder="Search events, stores, cities or states" aria-label="Search events">
+      ${stateSelect(regions)}</div>
+      <h2>Flagged events</h2><p class="muted small" id="n"></p><div id="ev"></div>
       <h2>New clusters</h2><div id="fd"></div>
       <h2>Word list</h2><p>${P.name_pool.map(esc).join(", ") || "none yet"}</p>`;
     const draw = () => {
       const q = document.getElementById("q").value;
-      document.getElementById("ev").innerHTML = P.events.filter((e) => match(q, e.name, e.store, e.city, e.state, e.level))
-        .slice(0, 400).map((e) => `<div class="card">${badge(e.level)}<b><a href="${esc(e.url)}">${esc(e.name)}</a></b>
+      const rows = S.privateList(P, q, STATE, DATA.regions);
+      document.getElementById("n").textContent = `${rows.length} event${rows.length === 1 ? "" : "s"}` +
+        (rows.length > 400 ? " (showing the first 400)" : "");
+      document.getElementById("ev").innerHTML = rows.slice(0, 400).map((e) => `<div class="card">${badge(e.level)}<b><a href="${esc(e.url)}">${esc(e.name)}</a></b>
           <div class="muted">${esc(e.store)} · ${esc(e.city)}, ${esc(e.state)} · ${day(e.date)} · score ${esc(e.score)}
-          · ${esc(e.registered)} registered, usual ${esc(e.usual)}</div><ul>${e.signals.map(sig).join("")}</ul></div>`).join("");
+          · ${esc(e.registered)} registered, usual ${esc(e.usual)}</div><ul>${e.signals.map(sig).join("")}</ul></div>`).join("") ||
+        `<p class="muted">No events match.</p>`;
       document.getElementById("fd").innerHTML = P.finder.map((c) => `<div class="card"><b>${esc(c.kind)}</b>
         ${c.template ? `<code>${esc(c.template)}</code>` : ""} · ${esc(c.accounts)} accounts · ${esc(c.unexplained_events)} unexplained events
         <pre>${esc(JSON.stringify({ events: c.events, stores: c.stores, examples: c.examples }, null, 1))}</pre></div>`).join("") ||
         `<p class="muted">Nothing new found.</p>`;
     };
-    document.getElementById("q").addEventListener("input", draw);
-    draw();
+    bindFilters("#/private", draw);
   }
 
   function asOf() {
@@ -208,9 +212,9 @@
   }
 
   function route() {
-    const [h, qs] = location.hash.replace(/^#\/?/, "").split("?");
-    const want = new URLSearchParams(qs || "").get("state") || "";
-    STATE = filterValues().has(want) ? want : "";
+    const h = location.hash.replace(/^#\/?/, "").split("?")[0];
+    const want = hashState();
+    STATE = filterValues(DATA.regions).has(want) ? want : "";
     navLinks();
     const [page, arg] = h.split("/");
     document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("on",

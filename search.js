@@ -76,7 +76,19 @@
     });
   }
 
-  const api = { clean, stateName, storeText, eventText, matches, inState, byStanding, storeList, eventList };
+  // The private page's list (all levels), in its data's order, with the same search and
+  // state filter. Each private event carries its store's name, city, state and country.
+  // `regions` (full state names) comes from the private data, else from the caller.
+  function privateList(priv, query, filter, regions) {
+    const regs = (priv && priv.regions) || regions || [];
+    return ((priv && priv.events) || []).filter((e) => {
+      const s = { name: e.store, city: e.city, state: e.state, country: e.country };
+      return inState(s, filter) && matches(query, eventText(e, s, regs));
+    });
+  }
+
+  const api = { clean, stateName, storeText, eventText, matches, inState, byStanding, storeList, eventList,
+    privateList };
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.RiftSearch = api;
 })(this);
